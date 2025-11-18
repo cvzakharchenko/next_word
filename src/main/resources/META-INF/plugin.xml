@@ -12,4 +12,24 @@
         <toolWindow factoryClass="com.github.cvzakharchenko.nextword.toolWindow.MyToolWindowFactory" id="MyToolWindow"/>
         <postStartupActivity implementation="com.github.cvzakharchenko.nextword.startup.MyProjectActivity" />
     </extensions>
+
+    <actions>
+        <group id="NextWord.Group" text="Next Word Navigation" popup="true">
+            <add-to-group group-id="FindMenuGroup" anchor="after" relative-to-action="FindNext"/>
+
+            <action id="NextWord.NextWordAction"
+                    class="com.github.cvzakharchenko.nextword.actions.NextWordAction"
+                    text="Next Word Occurrence"
+                    description="Finds the next occurrence of the whole word at caret">
+                <keyboard-shortcut first-keystroke="alt N" keymap="$default"/>
+            </action>
+
+            <action id="NextWord.PreviousWordAction"
+                    class="com.github.cvzakharchenko.nextword.actions.PreviousWordAction"
+                    text="Previous Word Occurrence"
+                    description="Finds the previous occurrence of the whole word at caret">
+                <keyboard-shortcut first-keystroke="alt P" keymap="$default"/>
+            </action>
+        </group>
+    </actions>
 </idea-plugin>
