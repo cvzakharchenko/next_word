@@ -4,8 +4,8 @@ import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.CommonDataKeys
 import com.intellij.openapi.editor.Editor
-import com.intellij.openapi.editor.Inlay
 import com.intellij.openapi.editor.EditorCustomElementRenderer
+import com.intellij.openapi.editor.Inlay
 import com.intellij.openapi.editor.markup.TextAttributes
 import com.intellij.openapi.editor.ScrollType
 import com.intellij.openapi.util.TextRange
@@ -53,7 +53,7 @@ abstract class WordNavigationAction : AnAction(), DumbAware {
 
             // Show inlay hint with occurrence count
             val (currentIndex, totalCount) = countOccurrences(editor, targetWord, foundOffset)
-            showOccurrenceHint(editor, foundOffset, targetWord, currentIndex, totalCount)
+            showOccurrenceHint(editor, foundOffset, currentIndex, totalCount)
         }
     }
 
@@ -145,7 +145,7 @@ abstract class WordNavigationAction : AnAction(), DumbAware {
         return Pair(currentIndex, count)
     }
 
-    private fun showOccurrenceHint(editor: Editor, offset: Int, word: String, currentIndex: Int, totalCount: Int) {
+    private fun showOccurrenceHint(editor: Editor, offset: Int, currentIndex: Int, totalCount: Int) {
         // Clean up previous hint
         alarm.cancelAllRequests()
         currentInlay?.let {
