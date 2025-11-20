@@ -157,9 +157,6 @@ abstract class WordNavigationAction : AnAction(), DumbAware {
 
         // Create new hint
         val hintText = " $currentIndex/$totalCount "
-        val document = editor.document
-        val lineNumber = document.getLineNumber(offset)
-        val lineEndOffset = document.getLineEndOffset(lineNumber)
 
         val renderer = object : EditorCustomElementRenderer {
             override fun calcWidthInPixels(inlay: Inlay<*>): Int {
@@ -174,14 +171,13 @@ abstract class WordNavigationAction : AnAction(), DumbAware {
                 g.font = font
                 g.color = JBColor.GRAY // Theme-aware color
 
-                val fontMetrics = g.fontMetrics
                 val x = targetRegion.x + 5
                 val y = targetRegion.y + editor.ascent
                 g.drawString(hintText, x, y)
             }
         }
 
-        val inlay = editor.inlayModel.addAfterLineEndElement(lineEndOffset, false, renderer)
+        val inlay = editor.inlayModel.addAfterLineEndElement(offset, false, renderer)
         currentInlay = inlay
 
         // Schedule removal after 2 seconds
