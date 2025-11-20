@@ -11,11 +11,10 @@ import com.intellij.openapi.editor.ScrollType
 import com.intellij.openapi.util.TextRange
 import com.intellij.openapi.project.DumbAware
 import com.intellij.openapi.util.Disposer
-import com.intellij.openapi.application.ApplicationManager
+import com.intellij.util.Alarm
+import com.intellij.ui.JBColor
 import java.awt.Graphics
 import java.awt.Rectangle
-import java.awt.Color
-import java.awt.Font
 import java.util.regex.Pattern
 
 abstract class WordNavigationAction : AnAction(), DumbAware {
@@ -23,6 +22,7 @@ abstract class WordNavigationAction : AnAction(), DumbAware {
     companion object {
         // Track the current inlay hint across all instances
         private var currentInlay: Inlay<*>? = null
+        private val alarm = Alarm(Alarm.ThreadToUse.SWING_THREAD)
     }
 
     override fun update(e: AnActionEvent) {
@@ -52,7 +52,8 @@ abstract class WordNavigationAction : AnAction(), DumbAware {
             editor.scrollingModel.scrollToCaret(ScrollType.MAKE_VISIBLE)
             
             // Show inlay hint with occurrence count
-            showOccurrenceHint(editor, targetWord, foundOffset)
+            val (currentIndex, totalCount) = countOccurrences(editor, targetWord, foundOffset)
+            showOccurrenceHint(editor, foundOffset, targetWord, currentIndex, totalCount)
         }
     }
 
@@ -125,8 +126,28 @@ abstract class WordNavigationAction : AnAction(), DumbAware {
         return true
     }
     
-    private fun showOccurrenceHint(editor: Editor, word: String, currentOffset: Int) {
-        // Remove previous inlay hint if it exists
+    private fun countOccurrences(editor: Editor, word: String, currentOffset: Int): Pair<Int, Int> {
+        val text = editor.document.charsSequence
+        var count = 0
+        var currentIndex = 0
+        
+        var index = text.indexOf(word, 0, ignoreCase = false)
+        while (index != -1) {
+            if (isWholeWord(text, index, word.length)) {
+                count++
+                if (index == currentOffset) {
+                    currentIndex = count
+                }
+            }
+            index = text.indexOf(word, index + 1, ignoreCase = false)
+        }
+        
+        return Pair(currentIndex, count)
+    }
+    
+    private fun showOccurrenceHint(editor: Editor, offset: Int, word: String, currentIndex: Int, totalCount: Int) {
+        // Clean up previous hint
+        alarm.cancelAllRequests()
         currentInlay?.let {
             if (it.isValid) {
                 Disposer.dispose(it)
@@ -134,65 +155,43 @@ abstract class WordNavigationAction : AnAction(), DumbAware {
         }
         currentInlay = null
         
-        val text = editor.document.charsSequence
-        val occurrences = mutableListOf<Int>()
+        // Create new hint
+        val hintText = " $currentIndex/$totalCount "
+        val document = editor.document
+        val lineNumber = document.getLineNumber(offset)
+        val lineEndOffset = document.getLineEndOffset(lineNumber)
         
-        // Find all occurrences
-        var index = text.indexOf(word, 0, ignoreCase = false)
-        while (index != -1) {
-            if (isWholeWord(text, index, word.length)) {
-                occurrences.add(index)
+        val renderer = object : EditorCustomElementRenderer {
+            override fun calcWidthInPixels(inlay: Inlay<*>): Int {
+                val fontMetrics = editor.contentComponent.getFontMetrics(
+                    editor.colorsScheme.getFont(com.intellij.openapi.editor.colors.EditorFontType.PLAIN)
+                )
+                return fontMetrics.stringWidth(hintText) + 10 // Padding
             }
-            index = text.indexOf(word, index + 1, ignoreCase = false)
+            
+            override fun paint(inlay: Inlay<*>, g: Graphics, targetRegion: Rectangle, textAttributes: TextAttributes) {
+                val font = editor.colorsScheme.getFont(com.intellij.openapi.editor.colors.EditorFontType.PLAIN)
+                g.font = font
+                g.color = JBColor.GRAY // Theme-aware color
+                
+                val fontMetrics = g.fontMetrics
+                val x = targetRegion.x + 5
+                val y = targetRegion.y + editor.ascent
+                g.drawString(hintText, x, y)
+            }
         }
         
-        // Find current position in the list
-        val currentPosition = occurrences.indexOf(currentOffset) + 1
-        val total = occurrences.size
+        val inlay = editor.inlayModel.addAfterLineEndElement(lineEndOffset, false, renderer)
+        currentInlay = inlay
         
-        if (currentPosition > 0 && total > 1) {
-            // Create inlay hint after the line end
-            val inlayModel = editor.inlayModel
-            val hintText = " $currentPosition/$total "
-            
-            // Find the line number of the current word
-            val document = editor.document
-            val lineNumber = document.getLineNumber(currentOffset)
-            val lineEndOffset = document.getLineEndOffset(lineNumber)
-            
-            val renderer = object : EditorCustomElementRenderer {
-                override fun calcWidthInPixels(inlay: Inlay<*>): Int {
-                    return editor.contentComponent.getFontMetrics(
-                        editor.colorsScheme.getFont(com.intellij.openapi.editor.colors.EditorFontType.PLAIN)
-                    ).stringWidth(hintText)
+        // Schedule removal after 2 seconds
+        if (inlay != null) {
+            alarm.addRequest({
+                if (inlay.isValid && currentInlay == inlay) {
+                    Disposer.dispose(inlay)
+                    currentInlay = null
                 }
-                
-                override fun paint(inlay: Inlay<*>, g: Graphics, targetRegion: Rectangle, textAttributes: TextAttributes) {
-                    g.color = Color(128, 128, 128, 180) // Semi-transparent gray
-                    val font = editor.colorsScheme.getFont(com.intellij.openapi.editor.colors.EditorFontType.PLAIN)
-                        .deriveFont(Font.ITALIC, editor.colorsScheme.editorFontSize.toFloat() * 0.85f)
-                    g.font = font
-                    g.drawString(hintText, targetRegion.x, targetRegion.y + editor.ascent)
-                }
-            }
-            
-            val inlay = inlayModel.addAfterLineEndElement(lineEndOffset, false, renderer)
-            
-            // Store reference to current inlay
-            currentInlay = inlay
-            
-            // Auto-remove after 3 seconds
-            if (inlay != null) {
-                ApplicationManager.getApplication().executeOnPooledThread {
-                    Thread.sleep(3000)
-                    ApplicationManager.getApplication().invokeLater {
-                        if (inlay.isValid && currentInlay == inlay) {
-                            Disposer.dispose(inlay)
-                            currentInlay = null
-                        }
-                    }
-                }
-            }
+            }, 2000)
         }
     }
 }
