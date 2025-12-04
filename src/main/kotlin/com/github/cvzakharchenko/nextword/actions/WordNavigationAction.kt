@@ -3,6 +3,8 @@ package com.github.cvzakharchenko.nextword.actions
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.CommonDataKeys
+import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.application.ReadAction
 import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.editor.EditorCustomElementRenderer
 import com.intellij.openapi.editor.Inlay
@@ -15,14 +17,25 @@ import com.intellij.util.Alarm
 import com.intellij.ui.JBColor
 import java.awt.Graphics
 import java.awt.Rectangle
-import java.util.regex.Pattern
+
+/**
+ * Result of word search containing found offset and occurrence info
+ */
+data class SearchResult(
+    val foundOffset: Int,
+    val currentIndex: Int,
+    val totalCount: Int
+)
 
 abstract class WordNavigationAction : AnAction(), DumbAware {
 
     companion object {
         // Track the current inlay hint across all instances
         private var currentInlay: Inlay<*>? = null
-        private val alarm = Alarm(Alarm.ThreadToUse.SWING_THREAD)
+        // Use Application as parent disposable for proper lifecycle management
+        private val alarm: Alarm by lazy {
+            Alarm(Alarm.ThreadToUse.SWING_THREAD, ApplicationManager.getApplication())
+        }
     }
 
     override fun update(e: AnActionEvent) {
@@ -32,28 +45,40 @@ abstract class WordNavigationAction : AnAction(), DumbAware {
 
     override fun actionPerformed(e: AnActionEvent) {
         val editor = e.getData(CommonDataKeys.EDITOR) ?: return
-        val targetRange = getTargetWordRange(editor) ?: return
-        val targetWord = editor.document.getText(targetRange)
 
-        if (targetWord.isEmpty()) return
+        // Perform document reads within a ReadAction to properly acquire read lock
+        val searchResult = ReadAction.compute<SearchResult?, RuntimeException> {
+            val targetRange = getTargetWordRange(editor) ?: return@compute null
+            val targetWord = editor.document.getText(targetRange)
 
-        val foundOffset = findWord(editor, targetWord, targetRange)
-        if (foundOffset != -1) {
+            if (targetWord.isEmpty()) return@compute null
+
+            // Combined search and count in a single operation
+            findWordWithOccurrences(editor, targetWord, targetRange)
+        } ?: return
+
+        if (searchResult.foundOffset != -1) {
+            val targetWord = ReadAction.compute<String, RuntimeException> {
+                val targetRange = getTargetWordRange(editor) ?: return@compute ""
+                editor.document.getText(targetRange)
+            }
+            
+            if (targetWord.isEmpty()) return
+
             val caretModel = editor.caretModel
             val selectionModel = editor.selectionModel
 
             // Move caret to the end of the found word
-            caretModel.moveToOffset(foundOffset + targetWord.length)
+            caretModel.moveToOffset(searchResult.foundOffset + targetWord.length)
 
             // Select the word
-            selectionModel.setSelection(foundOffset, foundOffset + targetWord.length)
+            selectionModel.setSelection(searchResult.foundOffset, searchResult.foundOffset + targetWord.length)
 
             // Scroll to make it visible
             editor.scrollingModel.scrollToCaret(ScrollType.MAKE_VISIBLE)
 
             // Show inlay hint with occurrence count
-            val (currentIndex, totalCount) = countOccurrences(editor, targetWord, foundOffset)
-            showOccurrenceHint(editor, foundOffset, currentIndex, totalCount)
+            showOccurrenceHint(editor, searchResult.foundOffset, searchResult.currentIndex, searchResult.totalCount)
         }
     }
 
@@ -101,7 +126,45 @@ abstract class WordNavigationAction : AnAction(), DumbAware {
         return null
     }
 
-    protected abstract fun findWord(editor: Editor, word: String, currentWordRange: TextRange): Int
+    /**
+     * Finds the target word and counts all occurrences in a single pass.
+     * Returns SearchResult with the found offset and occurrence statistics.
+     */
+    private fun findWordWithOccurrences(editor: Editor, word: String, currentWordRange: TextRange): SearchResult {
+        val text = editor.document.charsSequence
+        
+        // First, collect all whole-word occurrences in a single pass
+        val occurrences = mutableListOf<Int>()
+        var index = text.indexOf(word, 0, ignoreCase = false)
+        while (index != -1) {
+            if (isWholeWord(text, index, word.length)) {
+                occurrences.add(index)
+            }
+            index = text.indexOf(word, index + 1, ignoreCase = false)
+        }
+        
+        if (occurrences.isEmpty()) {
+            return SearchResult(-1, 0, 0)
+        }
+        
+        // Find the target occurrence based on direction
+        val foundOffset = findTargetOccurrence(occurrences, currentWordRange)
+        
+        // Determine the current index (1-based)
+        val currentIndex = if (foundOffset != -1) {
+            occurrences.indexOf(foundOffset) + 1
+        } else {
+            0
+        }
+        
+        return SearchResult(foundOffset, currentIndex, occurrences.size)
+    }
+
+    /**
+     * Given all occurrences, find the target occurrence based on navigation direction.
+     * To be implemented by subclasses.
+     */
+    protected abstract fun findTargetOccurrence(occurrences: List<Int>, currentWordRange: TextRange): Int
 
     protected fun isWholeWord(text: CharSequence, offset: Int, length: Int): Boolean {
         if (offset < 0 || offset + length > text.length) return false
@@ -124,25 +187,6 @@ abstract class WordNavigationAction : AnAction(), DumbAware {
         }
 
         return true
-    }
-
-    private fun countOccurrences(editor: Editor, word: String, currentOffset: Int): Pair<Int, Int> {
-        val text = editor.document.charsSequence
-        var count = 0
-        var currentIndex = 0
-
-        var index = text.indexOf(word, 0, ignoreCase = false)
-        while (index != -1) {
-            if (isWholeWord(text, index, word.length)) {
-                count++
-                if (index == currentOffset) {
-                    currentIndex = count
-                }
-            }
-            index = text.indexOf(word, index + 1, ignoreCase = false)
-        }
-
-        return Pair(currentIndex, count)
     }
 
     private fun showOccurrenceHint(editor: Editor, offset: Int, currentIndex: Int, totalCount: Int) {

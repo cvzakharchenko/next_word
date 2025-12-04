@@ -1,36 +1,30 @@
 package com.github.cvzakharchenko.nextword.actions
 
-import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.util.TextRange
 
 class NextWordAction : WordNavigationAction() {
 
-    override fun findWord(editor: Editor, word: String, currentWordRange: TextRange): Int {
-        val document = editor.document
-        val text = document.charsSequence
+    override fun findTargetOccurrence(occurrences: List<Int>, currentWordRange: TextRange): Int {
+        if (occurrences.isEmpty()) return -1
+        
         val startOffset = currentWordRange.endOffset
         
-        // Search from startOffset to end
-        var index = text.indexOf(word, startOffset, ignoreCase = false)
-        while (index != -1) {
-            if (isWholeWord(text, index, word.length)) {
-                return index
+        // Find the first occurrence after currentWordRange.endOffset
+        for (offset in occurrences) {
+            if (offset >= startOffset) {
+                return offset
             }
-            index = text.indexOf(word, index + 1, ignoreCase = false)
         }
         
-        // Wrap around: search from 0 to startOffset
-        index = text.indexOf(word, 0, ignoreCase = false)
-        val limit = currentWordRange.startOffset
-        
-        while (index != -1 && index <= limit) {
-             if (isWholeWord(text, index, word.length)) {
-                return index
+        // Wrap around: return the first occurrence (before current position)
+        // But skip if it's the same as current word
+        for (offset in occurrences) {
+            if (offset < currentWordRange.startOffset) {
+                return offset
             }
-            index = text.indexOf(word, index + 1, ignoreCase = false)
         }
         
+        // If only one occurrence and it's the current word, return -1
         return -1
     }
 }
-
