@@ -79,6 +79,15 @@ abstract class WordNavigationAction : AnAction(), DumbAware {
 
             // Show inlay hint with occurrence count
             showOccurrenceHint(editor, searchResult.foundOffset, searchResult.currentIndex, searchResult.totalCount)
+        } else if (searchResult.totalCount == 1) {
+            // Single occurrence - show "1/1" hint at current position as feedback
+            val hintOffset = ReadAction.compute<Int, RuntimeException> {
+                val targetRange = getTargetWordRange(editor) ?: return@compute -1
+                targetRange.startOffset
+            }
+            if (hintOffset != -1) {
+                showOccurrenceHint(editor, hintOffset, 1, 1)
+            }
         }
     }
 
